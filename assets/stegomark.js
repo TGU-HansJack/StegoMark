@@ -1,6 +1,13 @@
 (function () {
     "use strict";
 
+    try {
+        if (window.__STEGOMARK_LOADED__) {
+            return;
+        }
+        window.__STEGOMARK_LOADED__ = true;
+    } catch (e0) {}
+
     var bootNode = document.getElementById("stegomark-bootstrap");
     if (!bootNode) {
         return;

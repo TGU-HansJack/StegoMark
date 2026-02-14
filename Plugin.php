@@ -9,12 +9,12 @@ require_once __DIR__ . '/Store.php';
  * 为 Typecho 提供隐形水印、访客指纹与泄露溯源的内容版权保护插件
  * @package StegoMark
  * @author 寒士杰克
- * @version 1.1.0
+ * @version 1.1.1
  * @link https://www.hansjack.com
  */
 class StegoMark_Plugin implements Typecho_Plugin_Interface
 {
-    private const VERSION = '1.1.0';
+    private const VERSION = '1.1.1';
 
     private const ZW_ZERO = "\xE2\x80\x8B";
     private const ZW_ONE = "\xE2\x80\x8C";
@@ -256,6 +256,15 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($extraInjectMaxInserts);
 
+        $inlineFrontendJs = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'inlineFrontendJs',
+            ['1' => _t('内联前端 JS（避免外链被拦截）')],
+            [],
+            _t('前端脚本'),
+            _t('启用后将把 StegoMark 前端脚本直接内联输出到页面，减少被浏览器插件/规则拦截外链 JS 导致功能失效的情况。若用户完全禁用 JS，则所有前端功能仍不可用。')
+        );
+        $form->addInput($inlineFrontendJs);
+
         $customCss = new Typecho_Widget_Helper_Form_Element_Textarea('customCss', null, '', _t('自定义前端 CSS'), _t('会注入到前台页面，可用于自定义任意元素样式。'));
         $form->addInput($customCss);
 
@@ -310,6 +319,7 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
             'extraInjectSelectors' => '',
             'extraInjectMinLength' => 24,
             'extraInjectMaxInserts' => 18,
+            'inlineFrontendJs' => false,
             'customCss' => '',
             'customLayoutHtml' => '',
         ];
@@ -338,6 +348,7 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         $cfg['visualCanvasEnabled'] = self::checkboxEnabled($cfg['visualCanvasEnabled'] ?? null);
         $cfg['blockIfNoFingerprint'] = self::checkboxEnabled($cfg['blockIfNoFingerprint'] ?? null);
         $cfg['extraInjectEnabled'] = self::checkboxEnabled($cfg['extraInjectEnabled'] ?? null);
+        $cfg['inlineFrontendJs'] = self::checkboxEnabled($cfg['inlineFrontendJs'] ?? null);
 
         $strength = strtolower(trim((string) ($cfg['watermarkStrength'] ?? 'medium')));
         $cfg['watermarkStrength'] = in_array($strength, ['weak', 'medium', 'strong'], true) ? $strength : 'medium';
@@ -593,9 +604,21 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         self::$footerRendered = true;
 
         echo '<link rel="stylesheet" href="' . htmlspecialchars($pluginUrl . '/assets/stegomark.css?v=' . self::VERSION, ENT_QUOTES, 'UTF-8') . '">';
-        echo '<div id="stegomark-root" class="stegomark-root" aria-hidden="true"></div>';
+        echo '<div id="stegomark-root" class="stegomark-root" aria-hidden="true" data-sm-token="' . htmlspecialchars($token, ENT_QUOTES, 'UTF-8') . '"></div>';
         echo '<script type="application/json" id="stegomark-bootstrap">' . $json . '</script>';
-        echo '<script src="' . htmlspecialchars($pluginUrl . '/assets/stegomark.js?v=' . self::VERSION, ENT_QUOTES, 'UTF-8') . '"></script>';
+
+        if (!empty($cfg['inlineFrontendJs'])) {
+            $js = @file_get_contents(__DIR__ . '/assets/stegomark.js');
+            if (is_string($js) && trim($js) !== '') {
+                // Avoid accidental termination if user content contains "</script>".
+                $js = str_replace('</script', '</scr"+"ipt', $js);
+                echo '<script id="stegomark-inline-js">' . $js . '</script>';
+            } else {
+                echo '<script src="' . htmlspecialchars($pluginUrl . '/assets/stegomark.js?v=' . self::VERSION, ENT_QUOTES, 'UTF-8') . '"></script>';
+            }
+        } else {
+            echo '<script src="' . htmlspecialchars($pluginUrl . '/assets/stegomark.js?v=' . self::VERSION, ENT_QUOTES, 'UTF-8') . '"></script>';
+        }
 
         if ($cid > 0 && (!empty($cfg['copyLogEnabled']) || !empty($ctx['visitor']['enabled']))) {
             StegoMark_Store::appendLog('access', [
