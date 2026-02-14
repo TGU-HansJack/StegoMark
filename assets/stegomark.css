@@ -1,0 +1,72 @@
+.stegomark-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2147482000;
+    isolation: isolate;
+}
+
+.stegomark-overlay .sm-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.stegomark-overlay .sm-bg-layer {
+    opacity: var(--sm-bg-opacity, 0.03);
+    transform-origin: center;
+    transform:
+        translate(var(--sm-bg-x, 0px), var(--sm-bg-y, 0px))
+        rotate(var(--sm-bg-rotate, -14deg))
+        scale(var(--sm-bg-scale, 1.1));
+    background-repeat: repeat;
+    background-size: var(--sm-bg-size, 520px) var(--sm-bg-size, 520px);
+    background-position: 0 0;
+    filter: blur(0.2px);
+}
+
+.stegomark-overlay .sm-noise-layer {
+    opacity: var(--sm-noise-opacity, 0.02);
+    background-repeat: repeat;
+    background-size: var(--sm-noise-size, 180px) var(--sm-noise-size, 180px);
+    mix-blend-mode: multiply;
+    transform:
+        translate(var(--sm-noise-x, 0px), var(--sm-noise-y, 0px))
+        rotate(var(--sm-noise-rotate, 6deg))
+        scale(var(--sm-noise-scale, 1.05));
+}
+
+.stegomark-overlay .sm-canvas-layer {
+    width: 100%;
+    height: 100%;
+    mix-blend-mode: multiply;
+}
+
+.stegomark-custom-layout {
+    position: relative;
+    margin: 0;
+    animation: sm-fade-in 360ms ease-out both;
+}
+
+@keyframes sm-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 768px) {
+    .stegomark-overlay .sm-bg-layer {
+        background-size: var(--sm-bg-size-mobile, 420px) var(--sm-bg-size-mobile, 420px);
+    }
+}
+
+@media print {
+    .stegomark-overlay {
+        display: none !important;
+    }
+}
