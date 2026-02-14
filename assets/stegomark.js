@@ -142,6 +142,131 @@
         return out;
     }
 
+    function getTextNodesIn(root, minLen) {
+        var out = [];
+        minLen = Math.max(0, Math.min(500, Number(minLen || 0)));
+        if (!root || !document.createTreeWalker) {
+            return out;
+        }
+        var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (node) {
+                if (!node || !node.nodeValue) {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                var p = node.parentNode;
+                if (p && p.nodeName && /^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA)$/i.test(p.nodeName)) {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                var text = node.nodeValue.replace(/\s+/g, "");
+                if (text.length < minLen) {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        });
+        while (walker.nextNode()) {
+            out.push(walker.currentNode);
+        }
+        return out;
+    }
+
+    function parseSelectorList(raw) {
+        var s = String(raw || "");
+        if (!s.trim()) {
+            return [];
+        }
+        return s.split(/[\r\n,]+/).map(function (x) {
+            return String(x || "").trim();
+        }).filter(function (x) {
+            return !!x;
+        });
+    }
+
+    function applyExtraContainerInjection() {
+        var ex = boot.extra || {};
+        if (!(Number(ex.enabled) === 1)) {
+            return;
+        }
+        var algorithms = Array.isArray(boot.algorithms) ? boot.algorithms : [];
+        if (algorithms.indexOf("char") === -1) {
+            return;
+        }
+        var packet = "";
+        if (boot.serverPacket) {
+            packet = String(boot.serverPacket);
+        } else if (boot.token) {
+            packet = tokenToPacket(String(boot.token));
+        }
+        if (!packet) {
+            return;
+        }
+
+        var selectors = parseSelectorList(ex.selectors || "");
+        if (!selectors.length) {
+            return;
+        }
+
+        var minLen = clamp(ex.minLength != null ? Number(ex.minLength) : 24, 0, 500);
+        var maxInserts = clamp(ex.maxInserts != null ? Number(ex.maxInserts) : 18, 1, 500);
+        var inserted = 0;
+
+        for (var si = 0; si < selectors.length; si++) {
+            if (inserted >= maxInserts) {
+                break;
+            }
+            var sel = selectors[si];
+            var els = [];
+            try {
+                els = document.querySelectorAll(sel);
+            } catch (eSel) {
+                continue;
+            }
+            for (var ei = 0; ei < els.length; ei++) {
+                if (inserted >= maxInserts) {
+                    break;
+                }
+                var el = els[ei];
+                if (!el || !el.getAttribute) {
+                    continue;
+                }
+                try {
+                    if (el.closest && (el.closest("#stegomark-root") || el.closest(".stegomark-overlay"))) {
+                        continue;
+                    }
+                } catch (eClose) {}
+                if (el.getAttribute("data-sm-injected") === "1") {
+                    continue;
+                }
+
+                var nodes = getTextNodesIn(el, minLen);
+                if (!nodes.length) {
+                    continue;
+                }
+
+                var seed = parseInt(hashText("ex:" + sel + ":" + ei + ":" + (boot.token || "")), 16) >>> 0;
+                var did = false;
+                for (var ni = 0; ni < nodes.length; ni++) {
+                    var node = nodes[ni];
+                    if (!node || !node.nodeValue) {
+                        continue;
+                    }
+                    if (String(node.nodeValue).indexOf(ZW_START) !== -1) {
+                        continue;
+                    }
+                    insertPacketIntoNode(node, packet, seed + ni, "random");
+                    did = true;
+                    inserted++;
+                    break;
+                }
+                if (did) {
+                    try {
+                        el.setAttribute("data-sm-injected", "1");
+                    } catch (eMark) {}
+                }
+            }
+        }
+    }
+
     function resolveCopyCount(strength, candidateCount) {
         var base = 2;
         if (strength === "weak") {
@@ -264,6 +389,9 @@
     }
 
     function injectCustomCss() {
+        if (!(boot.page && Number(boot.page.isSingle) === 1) || !(Number(boot.cid) > 0)) {
+            return;
+        }
         var css = String(boot.customCss || "");
         if (!css) {
             return;
@@ -281,6 +409,9 @@
     }
 
     function injectCustomLayout() {
+        if (!(boot.page && Number(boot.page.isSingle) === 1) || !(Number(boot.cid) > 0)) {
+            return;
+        }
         var tpl = String(boot.customLayoutHtml || "");
         if (!tpl) {
             return;
@@ -310,6 +441,10 @@
         }
         var form = new FormData();
         form.append("do", doName);
+        if (boot.actionSig && Number(boot.actionSig.enabled) === 1) {
+            form.append("sm_ts", boot.actionSig.ts == null ? "" : String(boot.actionSig.ts));
+            form.append("sm_sig", boot.actionSig.sig == null ? "" : String(boot.actionSig.sig));
+        }
         for (var key in payload) {
             if (payload.hasOwnProperty(key)) {
                 form.append(key, payload[key] == null ? "" : String(payload[key]));
@@ -341,6 +476,26 @@
         if (!(boot.dynamic && Number(boot.dynamic.enabled) === 1)) {
             return;
         }
+        if (!(boot.page && Number(boot.page.isSingle) === 1) || !(Number(boot.cid) > 0)) {
+            return;
+        }
+
+        var mode = (boot.integrity && boot.integrity.mode) ? String(boot.integrity.mode) : "off";
+        if (mode !== "off") {
+            // In signed/sealed mode, client cannot mint a new valid token (no secret).
+            // We just re-inject the server packet to improve distribution.
+            var p = "";
+            if (boot.serverPacket) {
+                p = String(boot.serverPacket);
+            } else if (boot.token) {
+                p = tokenToPacket(String(boot.token));
+            }
+            if (p) {
+                injectPacket(p);
+            }
+            return;
+        }
+
         var payload = {};
         var src = boot.payloadBase || {};
         for (var k in src) {
@@ -355,6 +510,9 @@
 
     function applyServerPacket() {
         if (!boot.serverPacket) {
+            return;
+        }
+        if (!(boot.page && Number(boot.page.isSingle) === 1) || !(Number(boot.cid) > 0)) {
             return;
         }
         var algorithms = Array.isArray(boot.algorithms) ? boot.algorithms : [];
@@ -574,6 +732,9 @@
         if (!(boot.copy && Number(boot.copy.enabled) === 1)) {
             return;
         }
+        if (!(boot.page && Number(boot.page.isSingle) === 1) || !(Number(boot.cid) > 0)) {
+            return;
+        }
         document.addEventListener("copy", function (ev) {
             var sel = window.getSelection ? window.getSelection() : null;
             if (!sel) {
@@ -654,6 +815,12 @@
 
     function init() {
         maybeUnlockBlockedView();
+        applyExtraContainerInjection();
+
+        var isSingle = (boot.page && Number(boot.page.isSingle) === 1) && (Number(boot.cid) > 0);
+        if (!isSingle) {
+            return;
+        }
         injectCustomCss();
         injectCustomLayout();
         applyServerPacket();

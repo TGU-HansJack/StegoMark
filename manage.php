@@ -184,6 +184,7 @@ function sm_h($value): string
                                 <thead>
                                 <tr>
                                     <th>来源层</th>
+                                    <th>验真</th>
                                     <th>文章</th>
                                     <th>Watermark ID</th>
                                     <th>Site Fingerprint</th>
@@ -197,6 +198,23 @@ function sm_h($value): string
                                     <?php $cid = (int) ($row['articleId'] ?? 0); ?>
                                     <tr>
                                         <td><?php echo sm_h($row['source'] ?? '-'); ?></td>
+                                        <td>
+                                            <?php
+                                            $tv = (int) ($row['tokenVersion'] ?? 1);
+                                            $ok = (int) ($row['signatureOk'] ?? 0);
+                                            $sealed = (int) ($row['sealed'] ?? 0);
+                                            if ($tv === 1) {
+                                                echo '<span class="sm-k">无签名</span>';
+                                            } elseif ($ok === 1) {
+                                                echo '<span class="sm-k" style="color:var(--sm-ok)">有效</span>';
+                                                if ($sealed === 1) {
+                                                    echo '<div class="sm-k">封装</div>';
+                                                }
+                                            } else {
+                                                echo '<span class="sm-k" style="color:var(--sm-bad)">无效</span>';
+                                            }
+                                            ?>
+                                        </td>
                                         <td>
                                             <?php echo $cid > 0 ? ('CID ' . $cid) : '-'; ?>
                                             <?php if ($cid > 0): ?>

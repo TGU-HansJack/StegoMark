@@ -9,12 +9,12 @@ require_once __DIR__ . '/Store.php';
  * 为 Typecho 提供隐形水印、访客指纹与泄露溯源的内容版权保护插件
  * @package StegoMark
  * @author 寒士杰克
- * @version 1.0.3
+ * @version 1.1.0
  * @link https://www.hansjack.com
  */
 class StegoMark_Plugin implements Typecho_Plugin_Interface
 {
-    private const VERSION = '1.0.3';
+    private const VERSION = '1.1.0';
 
     private const ZW_ZERO = "\xE2\x80\x8B";
     private const ZW_ONE = "\xE2\x80\x8C";
@@ -117,6 +117,28 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         $dynamicInjectEnabled = new Typecho_Widget_Helper_Form_Element_Checkbox('dynamicInjectEnabled', ['1' => _t('启用前端动态水印注入')], ['1'], _t('动态注入'));
         $form->addInput($dynamicInjectEnabled);
 
+        $antiReverseMode = new Typecho_Widget_Helper_Form_Element_Select(
+            'antiReverseMode',
+            [
+                'off' => _t('关闭（兼容可读载荷）'),
+                'sign' => _t('签名防伪（防篡改/防伪造）'),
+                'seal' => _t('封装延迟逆向（载荷不可读）'),
+            ],
+            'seal',
+            _t('防逆向/防伪'),
+            _t('签名/封装模式会对水印载荷做“防伪校验”，并延迟外部逆向与伪造；解码需在后台进行。')
+        );
+        $form->addInput($antiReverseMode);
+
+        $actionSignedRequests = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'actionSignedRequests',
+            ['1' => _t('启用接口签名（防刷/防 CSRF 伪造日志）')],
+            ['1'],
+            _t('接口保护'),
+            _t('为前端 ping/copy_log 请求增加签名校验，降低恶意刷日志与资源消耗风险。')
+        );
+        $form->addInput($actionSignedRequests);
+
         $crawlerNoWatermark = new Typecho_Widget_Helper_Form_Element_Checkbox('crawlerNoWatermark', ['1' => _t('搜索引擎无水印模式')], ['1'], _t('SEO兼容'));
         $form->addInput($crawlerNoWatermark);
 
@@ -189,6 +211,51 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         $contentSelector = new Typecho_Widget_Helper_Form_Element_Text('contentSelector', null, '', _t('正文选择器'), _t('可留空自动匹配。示例：.post-content / #article / [data-post-content-body]'));
         $form->addInput($contentSelector);
 
+        $extraInjectEnabled = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'extraInjectEnabled',
+            ['1' => _t('启用：额外容器隐藏水印注入')],
+            [],
+            _t('额外容器注入'),
+            _t('可将隐藏水印注入到你指定的前台其他容器（如页眉、侧边栏、页脚等），用于扩大取证覆盖面。需启用“字符水印”算法。')
+        );
+        $form->addInput($extraInjectEnabled);
+
+        $extraInjectScope = new Typecho_Widget_Helper_Form_Element_Select(
+            'extraInjectScope',
+            ['single' => _t('仅文章/页面单页'), 'all' => _t('全站前台页面')],
+            'single',
+            _t('额外容器作用范围'),
+            _t('仅影响“额外容器注入”功能；不会改变文章正文水印逻辑。')
+        );
+        $form->addInput($extraInjectScope);
+
+        $extraInjectSelectors = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'extraInjectSelectors',
+            null,
+            '',
+            _t('额外容器选择器'),
+            _t("一行一个 CSS 选择器。示例：\n.site-title\n.site-description\n.sidebar\nfooter")
+        );
+        $form->addInput($extraInjectSelectors);
+
+        $extraInjectMinLength = new Typecho_Widget_Helper_Form_Element_Text(
+            'extraInjectMinLength',
+            null,
+            '24',
+            _t('额外容器最小文本长度'),
+            _t('仅对文本长度达到该值的文本节点注入，避免短文本被“肉眼可感知”。建议 12-60。')
+        );
+        $form->addInput($extraInjectMinLength);
+
+        $extraInjectMaxInserts = new Typecho_Widget_Helper_Form_Element_Text(
+            'extraInjectMaxInserts',
+            null,
+            '18',
+            _t('额外容器每页最多注入次数'),
+            _t('用于限制全站模式下的注入规模，避免影响性能。建议 8-60。')
+        );
+        $form->addInput($extraInjectMaxInserts);
+
         $customCss = new Typecho_Widget_Helper_Form_Element_Textarea('customCss', null, '', _t('自定义前端 CSS'), _t('会注入到前台页面，可用于自定义任意元素样式。'));
         $form->addInput($customCss);
 
@@ -224,6 +291,8 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
             'visitorFingerprintEnabled' => true,
             'visitorBucketSeconds' => 1800,
             'dynamicInjectEnabled' => true,
+            'antiReverseMode' => 'seal',
+            'actionSignedRequests' => true,
             'crawlerNoWatermark' => true,
             'crawlerWhitelist' => "googlebot\nbingbot\nbaiduspider\nyandexbot\nduckduckbot\nsogou spider\n360spider",
             'apiFeedNoWatermark' => true,
@@ -236,6 +305,11 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
             'blockIfNoFingerprint' => false,
             'blockMaskText' => "正在验证浏览器环境…\n如果你使用了屏蔽插件，请将本站加入白名单后刷新页面。",
             'contentSelector' => '',
+            'extraInjectEnabled' => false,
+            'extraInjectScope' => 'single',
+            'extraInjectSelectors' => '',
+            'extraInjectMinLength' => 24,
+            'extraInjectMaxInserts' => 18,
             'customCss' => '',
             'customLayoutHtml' => '',
         ];
@@ -256,12 +330,14 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         $cfg['copyLogEnabled'] = self::checkboxEnabled($cfg['copyLogEnabled'] ?? null);
         $cfg['visitorFingerprintEnabled'] = self::checkboxEnabled($cfg['visitorFingerprintEnabled'] ?? null);
         $cfg['dynamicInjectEnabled'] = self::checkboxEnabled($cfg['dynamicInjectEnabled'] ?? null);
+        $cfg['actionSignedRequests'] = self::checkboxEnabled($cfg['actionSignedRequests'] ?? null);
         $cfg['crawlerNoWatermark'] = self::checkboxEnabled($cfg['crawlerNoWatermark'] ?? null);
         $cfg['apiFeedNoWatermark'] = self::checkboxEnabled($cfg['apiFeedNoWatermark'] ?? null);
         $cfg['visualBgEnabled'] = self::checkboxEnabled($cfg['visualBgEnabled'] ?? null);
         $cfg['visualNoiseEnabled'] = self::checkboxEnabled($cfg['visualNoiseEnabled'] ?? null);
         $cfg['visualCanvasEnabled'] = self::checkboxEnabled($cfg['visualCanvasEnabled'] ?? null);
         $cfg['blockIfNoFingerprint'] = self::checkboxEnabled($cfg['blockIfNoFingerprint'] ?? null);
+        $cfg['extraInjectEnabled'] = self::checkboxEnabled($cfg['extraInjectEnabled'] ?? null);
 
         $strength = strtolower(trim((string) ($cfg['watermarkStrength'] ?? 'medium')));
         $cfg['watermarkStrength'] = in_array($strength, ['weak', 'medium', 'strong'], true) ? $strength : 'medium';
@@ -279,6 +355,12 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         }
         $cfg['algorithms'] = $alg;
 
+        $mode = strtolower(trim((string) ($cfg['antiReverseMode'] ?? 'seal')));
+        $cfg['antiReverseMode'] = in_array($mode, ['off', 'sign', 'seal'], true) ? $mode : 'seal';
+
+        $extraScope = strtolower(trim((string) ($cfg['extraInjectScope'] ?? 'single')));
+        $cfg['extraInjectScope'] = in_array($extraScope, ['single', 'all'], true) ? $extraScope : 'single';
+
         $cfg['watermarkTokenLength'] = max(6, min(40, (int) ($cfg['watermarkTokenLength'] ?? 12)));
         $cfg['insertRatio'] = max(0.01, min(0.8, (float) ($cfg['insertRatio'] ?? 0.08)));
         $cfg['copyAnomalyThreshold'] = max(2, min(1000, (int) ($cfg['copyAnomalyThreshold'] ?? 5)));
@@ -287,10 +369,13 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         $cfg['visualBgOpacity'] = max(0.0, min(0.2, (float) ($cfg['visualBgOpacity'] ?? 0.020)));
         $cfg['visualNoiseOpacity'] = max(0.0, min(0.2, (float) ($cfg['visualNoiseOpacity'] ?? 0.015)));
         $cfg['visualCanvasOpacity'] = max(0.0, min(0.2, (float) ($cfg['visualCanvasOpacity'] ?? 0.018)));
+        $cfg['extraInjectMinLength'] = max(0, min(500, (int) ($cfg['extraInjectMinLength'] ?? 24)));
+        $cfg['extraInjectMaxInserts'] = max(1, min(500, (int) ($cfg['extraInjectMaxInserts'] ?? 18)));
         $cfg['copyAppendTemplate'] = self::cut((string) ($cfg['copyAppendTemplate'] ?? ''), 3000);
         $cfg['blockMaskText'] = self::cut((string) ($cfg['blockMaskText'] ?? ''), 2000);
         $cfg['crawlerWhitelist'] = self::cut((string) ($cfg['crawlerWhitelist'] ?? ''), 3000);
         $cfg['contentSelector'] = self::cut((string) ($cfg['contentSelector'] ?? ''), 500);
+        $cfg['extraInjectSelectors'] = self::cut((string) ($cfg['extraInjectSelectors'] ?? ''), 4000);
         $cfg['customCss'] = self::cut((string) ($cfg['customCss'] ?? ''), 12000);
         $cfg['customLayoutHtml'] = self::cut((string) ($cfg['customLayoutHtml'] ?? ''), 12000);
 
@@ -318,7 +403,7 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         }
 
         $payload = self::buildPayload($ctx);
-        $token = self::payloadToToken($payload);
+        $token = self::payloadToToken($payload, $cfg);
         $packet = self::tokenToZeroWidth($token);
         $modified = $html;
 
@@ -396,20 +481,39 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         }
 
         $ctx = self::resolveArchiveContext($archive, $cfg);
-        if (!$ctx) {
+        $extraEnabled = !empty($cfg['extraInjectEnabled']) && trim((string) ($cfg['extraInjectSelectors'] ?? '')) !== '';
+        $extraAll = $extraEnabled && ((string) ($cfg['extraInjectScope'] ?? 'single') === 'all');
+        if (!$ctx && !$extraAll) {
             return;
+        }
+        if (!$ctx) {
+            $ctx = self::resolveGlobalContext($archive, $cfg);
         }
 
         $cid = (int) ($ctx['cid'] ?? 0);
-        $runtime = is_array(self::$runtimeContextByCid[$cid] ?? null) ? self::$runtimeContextByCid[$cid] : [];
+        $runtime = $cid > 0 && is_array(self::$runtimeContextByCid[$cid] ?? null) ? self::$runtimeContextByCid[$cid] : [];
         $payload = is_array($runtime['payload'] ?? null) ? $runtime['payload'] : self::buildPayload($ctx);
-        $token = is_string($runtime['token'] ?? null) ? $runtime['token'] : self::payloadToToken($payload);
+        $token = is_string($runtime['token'] ?? null) ? $runtime['token'] : self::payloadToToken($payload, $cfg);
         $packet = is_string($runtime['packet'] ?? null) ? $runtime['packet'] : self::tokenToZeroWidth($token);
 
         $security = Typecho_Widget::widget('Widget_Security');
         $actionUrl = (string) $security->getIndex('/action/stegomark');
         $pluginUrl = rtrim((string) Helper::options()->pluginUrl, '/') . '/StegoMark';
         $cssLayerEnabled = in_array('css', (array) ($cfg['algorithms'] ?? []), true);
+
+        $actionSig = ['enabled' => !empty($cfg['actionSignedRequests']) ? 1 : 0, 'ts' => 0, 'sig' => '', 'ttl' => 0];
+        if (!empty($cfg['actionSignedRequests'])) {
+            $sigTs = time();
+            $ip = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+            $ua = trim((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''));
+            $ipHash = $ip === '' ? '' : substr(hash('sha256', $ip), 0, 24);
+            $uaHash = $ua === '' ? '' : substr(hash('sha256', $ua), 0, 24);
+            $wmid = (string) ($ctx['watermark']['wmid'] ?? '');
+            $secret = StegoMark_Store::getSiteSecret();
+            $base = $sigTs . '|' . $cid . '|' . $wmid . '|' . $ipHash . '|' . $uaHash;
+            $sig = substr(hash_hmac('sha256', $base, $secret), 0, 32);
+            $actionSig = ['enabled' => 1, 'ts' => $sigTs, 'sig' => $sig, 'ttl' => 7200];
+        }
 
         $bootstrap = [
             'version' => self::VERSION,
@@ -424,6 +528,21 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
             'serverPacket' => $packet,
             'payloadBase' => $payload,
             'actionUrl' => $actionUrl,
+            'actionSig' => $actionSig,
+            'page' => [
+                'isSingle' => $cid > 0 ? 1 : 0,
+                'type' => (string) ($ctx['type'] ?? ''),
+            ],
+            'integrity' => [
+                'mode' => (string) ($cfg['antiReverseMode'] ?? 'off'),
+            ],
+            'extra' => [
+                'enabled' => $extraEnabled ? 1 : 0,
+                'scope' => (string) ($cfg['extraInjectScope'] ?? 'single'),
+                'selectors' => (string) ($cfg['extraInjectSelectors'] ?? ''),
+                'minLength' => (int) ($cfg['extraInjectMinLength'] ?? 24),
+                'maxInserts' => (int) ($cfg['extraInjectMaxInserts'] ?? 18),
+            ],
             'copy' => [
                 'enabled' => !empty($cfg['copyAppendEnabled']) ? 1 : 0,
                 'template' => (string) ($cfg['copyAppendTemplate'] ?? ''),
@@ -478,7 +597,7 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         echo '<script type="application/json" id="stegomark-bootstrap">' . $json . '</script>';
         echo '<script src="' . htmlspecialchars($pluginUrl . '/assets/stegomark.js?v=' . self::VERSION, ENT_QUOTES, 'UTF-8') . '"></script>';
 
-        if (!empty($cfg['copyLogEnabled']) || !empty($ctx['visitor']['enabled'])) {
+        if ($cid > 0 && (!empty($cfg['copyLogEnabled']) || !empty($ctx['visitor']['enabled']))) {
             StegoMark_Store::appendLog('access', [
                 'cid' => $cid,
                 'wmid' => (string) ($ctx['watermark']['wmid'] ?? ''),
@@ -503,11 +622,11 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         $seen = [];
 
         foreach (self::extractZeroWidthTokens($text) as $token) {
-            $payload = self::tokenToPayload($token);
-            if (!is_array($payload)) {
+            $decoded = self::tokenToPayload($token);
+            if (!is_array($decoded) || !is_array($decoded['payload'] ?? null)) {
                 continue;
             }
-            $row = self::normalizeDecodedPayload($payload, 'char');
+            $row = self::normalizeDecodedPayload((array) $decoded['payload'], 'char', (array) ($decoded['meta'] ?? []));
             $sig = md5(json_encode($row));
             if (isset($seen[$sig])) {
                 continue;
@@ -518,11 +637,11 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
 
         if (preg_match_all('/<!--\s*SM:([A-Za-z0-9\-_]+)\s*-->/i', $text, $m)) {
             foreach ((array) ($m[1] ?? []) as $token) {
-                $payload = self::tokenToPayload((string) $token);
-                if (!is_array($payload)) {
+                $decoded = self::tokenToPayload((string) $token);
+                if (!is_array($decoded) || !is_array($decoded['payload'] ?? null)) {
                     continue;
                 }
-                $row = self::normalizeDecodedPayload($payload, 'comment');
+                $row = self::normalizeDecodedPayload((array) $decoded['payload'], 'comment', (array) ($decoded['meta'] ?? []));
                 $sig = md5(json_encode($row));
                 if (!isset($seen[$sig])) {
                     $seen[$sig] = 1;
@@ -533,11 +652,11 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
 
         if (preg_match_all('/data-sm-token=["\']([A-Za-z0-9\-_]+)["\']/i', $text, $m2)) {
             foreach ((array) ($m2[1] ?? []) as $token) {
-                $payload = self::tokenToPayload((string) $token);
-                if (!is_array($payload)) {
+                $decoded = self::tokenToPayload((string) $token);
+                if (!is_array($decoded) || !is_array($decoded['payload'] ?? null)) {
                     continue;
                 }
-                $row = self::normalizeDecodedPayload($payload, 'css');
+                $row = self::normalizeDecodedPayload((array) $decoded['payload'], 'css', (array) ($decoded['meta'] ?? []));
                 $sig = md5(json_encode($row));
                 if (!isset($seen[$sig])) {
                     $seen[$sig] = 1;
@@ -597,6 +716,39 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         ];
     }
 
+    private static function resolveGlobalContext($widget, array $cfg): array
+    {
+        $site = StegoMark_Store::ensureSiteIdentity();
+        $visitor = self::buildVisitorFingerprint($cfg);
+
+        $user = Typecho_Widget::widget('Widget_User');
+        $userLogged = is_object($user) && method_exists($user, 'hasLogin') && $user->hasLogin();
+        $userCtx = [
+            'logged' => $userLogged ? 1 : 0,
+            'uid' => $userLogged ? (int) ($user->uid ?? 0) : 0,
+            'name' => $userLogged ? (string) ($user->screenName ?? '') : '',
+        ];
+
+        $title = is_object($widget) ? (string) ($widget->title ?? '') : '';
+        $permalink = is_object($widget) ? (string) ($widget->permalink ?? '') : '';
+        if ($permalink === '') {
+            $siteUrl = rtrim((string) (Helper::options()->siteUrl ?? ''), '/');
+            $uri = (string) ($_SERVER['REQUEST_URI'] ?? '');
+            $permalink = $siteUrl !== '' && $uri !== '' ? ($siteUrl . $uri) : '';
+        }
+
+        return [
+            'cid' => 0,
+            'type' => 'global',
+            'title' => $title,
+            'permalink' => $permalink,
+            'siteFingerprint' => (string) ($site['siteFingerprint'] ?? ''),
+            'watermark' => ['wmid' => '', 'createdAt' => 0, 'updatedAt' => 0],
+            'visitor' => $visitor,
+            'user' => $userCtx,
+        ];
+    }
+
     public static function buildVisitorFingerprint(array $cfg): array
     {
         if (empty($cfg['visitorFingerprintEnabled'])) {
@@ -642,17 +794,90 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         return $payload;
     }
 
-    public static function payloadToToken(array $payload): string
+    public static function payloadToToken(array $payload, array $cfg = []): string
     {
-        $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($json === false) {
-            return '';
+        $mode = strtolower(trim((string) ($cfg['antiReverseMode'] ?? 'off')));
+        if (!in_array($mode, ['off', 'sign', 'seal'], true)) {
+            $mode = 'seal';
         }
-        $base = base64_encode($json);
-        if (!is_string($base)) {
-            return '';
+        if ($mode === 'off') {
+            $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($json === false) {
+                return '';
+            }
+            return self::base64UrlEncode($json);
         }
-        return rtrim(strtr($base, '+/', '-_'), '=');
+
+        $secret = StegoMark_Store::getSiteSecret();
+        if ($secret === '') {
+            // Fallback: keep working even if secret is missing for any reason.
+            $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            return $json === false ? '' : self::base64UrlEncode($json);
+        }
+
+        $flags = 0;
+
+        $sidBin = self::siteFingerprintToBin((string) ($payload['sid'] ?? ''));
+        $cid = (int) ($payload['cid'] ?? 0);
+        $wct = (int) ($payload['wct'] ?? 0);
+        $ts = (int) ($payload['ts'] ?? time());
+
+        $wid = self::cut((string) ($payload['wid'] ?? ''), 80);
+        $widRaw = (string) $wid;
+        $widLen = strlen($widRaw);
+        if ($widLen > 255) {
+            $widRaw = substr($widRaw, 0, 255);
+            $widLen = strlen($widRaw);
+        }
+
+        $plain = $sidBin
+            . self::packU32($cid)
+            . self::packU32($wct)
+            . self::packU32($ts)
+            . chr($widLen)
+            . $widRaw;
+
+        $vi = '';
+        $vb = 0;
+        if (!empty($payload['vi']) && is_string($payload['vi']) && preg_match('/^[A-Fa-f0-9]{24}$/', (string) $payload['vi'])) {
+            $bin = self::hexToBinSafe((string) $payload['vi']);
+            if ($bin !== '' && strlen($bin) === 12) {
+                $vi = $bin;
+                $vb = (int) ($payload['vb'] ?? 0);
+                $flags |= 1; // has visitor
+                $plain .= $vi . self::packU32($vb);
+            }
+        }
+
+        $uid = (int) ($payload['uid'] ?? 0);
+        $un = trim((string) ($payload['un'] ?? ''));
+        if ($uid > 0) {
+            $flags |= 2; // has user
+            $plain .= self::packU32($uid);
+        }
+        if (($flags & 2) === 2 && $un !== '') {
+            $unBytes = self::cutBytes($un, 240);
+            $unLen = strlen($unBytes);
+            if ($unLen > 0) {
+                $flags |= 4; // has username
+                $plain .= chr(min(255, $unLen)) . $unBytes;
+            }
+        }
+
+        if ($mode === 'seal') {
+            $nonce = self::randomBytesCompat(8);
+            if (strlen($nonce) !== 8) {
+                $nonce = substr(hash('sha256', microtime(true) . '|' . mt_rand(), true), 0, 8);
+            }
+            $cipher = self::xorSeal($plain, $secret, $nonce);
+            $head = chr(3) . chr($flags) . $nonce . $cipher;
+            $sig = substr(hash_hmac('sha256', $head, $secret, true), 0, 16);
+            return self::base64UrlEncode($head . $sig);
+        }
+
+        $head = chr(2) . chr($flags) . $plain;
+        $sig = substr(hash_hmac('sha256', $head, $secret, true), 0, 16);
+        return self::base64UrlEncode($head . $sig);
     }
 
     public static function tokenToPayload(string $token): ?array
@@ -661,14 +886,243 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         if ($token === '' || preg_match('/[^A-Za-z0-9\-_]/', $token)) {
             return null;
         }
-        $base = strtr($token, '-_', '+/');
-        $base .= str_repeat('=', (4 - (strlen($base) % 4)) % 4);
-        $json = base64_decode($base, true);
-        if (!is_string($json) || $json === '') {
+
+        $raw = self::base64UrlDecode($token);
+        if (!is_string($raw) || $raw === '') {
             return null;
         }
-        $data = json_decode($json, true);
-        return is_array($data) ? $data : null;
+
+        $verByte = ord($raw[0]);
+        if ($verByte === 2 || $verByte === 3) {
+            $secret = StegoMark_Store::getSiteSecret();
+            if ($secret === '') {
+                return null;
+            }
+
+            $minLen = $verByte === 3 ? (1 + 1 + 8 + 16 + 10) : (1 + 1 + 16 + 10);
+            if (strlen($raw) < $minLen) {
+                return null;
+            }
+
+            $sig = substr($raw, -16);
+            $head = substr($raw, 0, -16);
+            $expect = substr(hash_hmac('sha256', $head, $secret, true), 0, 16);
+            if (!hash_equals($expect, $sig)) {
+                return null;
+            }
+
+            $flags = ord($raw[1]);
+            $offset = 2;
+            if ($verByte === 3) {
+                $nonce = substr($raw, $offset, 8);
+                $offset += 8;
+                $cipher = substr($raw, $offset, strlen($raw) - $offset - 16);
+                $plain = self::xorSeal($cipher, $secret, $nonce);
+            } else {
+                $plain = substr($raw, $offset, strlen($raw) - $offset - 16);
+            }
+
+            $payload = self::parseCompactPlain($plain, $flags);
+            if (!is_array($payload)) {
+                return null;
+            }
+            return [
+                'payload' => $payload,
+                'meta' => [
+                    'tokenVersion' => $verByte,
+                    'signatureOk' => 1,
+                    'sealed' => $verByte === 3 ? 1 : 0,
+                ],
+            ];
+        }
+
+        // Legacy JSON payload: base64url(JSON)
+        $data = json_decode($raw, true);
+        if (!is_array($data)) {
+            return null;
+        }
+        return [
+            'payload' => $data,
+            'meta' => [
+                'tokenVersion' => 1,
+                'signatureOk' => 0,
+                'sealed' => 0,
+            ],
+        ];
+    }
+
+    private static function parseCompactPlain(string $plain, int $flags): ?array
+    {
+        $off = 0;
+        if (strlen($plain) < (4 + 4 + 4 + 4 + 1)) {
+            return null;
+        }
+
+        $sidBin = substr($plain, $off, 4);
+        $off += 4;
+        $cid = self::unpackU32($plain, $off);
+        $wct = self::unpackU32($plain, $off);
+        $ts = self::unpackU32($plain, $off);
+        if ($cid === null || $wct === null || $ts === null) {
+            return null;
+        }
+
+        $widLen = ord($plain[$off] ?? "\x00");
+        $off += 1;
+        if ($widLen < 0 || strlen($plain) < ($off + $widLen)) {
+            return null;
+        }
+        $wid = substr($plain, $off, $widLen);
+        $off += $widLen;
+
+        $sidHex = strtoupper(bin2hex($sidBin));
+        $payload = [
+            'v' => 1,
+            'sid' => $sidHex !== '' ? ('SM-' . $sidHex) : '',
+            'cid' => (int) $cid,
+            'wid' => (string) $wid,
+            'wct' => (int) $wct,
+            'ts' => (int) $ts,
+        ];
+
+        if (($flags & 1) === 1) {
+            if (strlen($plain) < ($off + 12 + 4)) {
+                return null;
+            }
+            $viBin = substr($plain, $off, 12);
+            $off += 12;
+            $vb = self::unpackU32($plain, $off);
+            if ($vb === null) {
+                return null;
+            }
+            $payload['vi'] = strtoupper(bin2hex($viBin));
+            $payload['vb'] = (int) $vb;
+        }
+
+        if (($flags & 2) === 2) {
+            $uid = self::unpackU32($plain, $off);
+            if ($uid === null) {
+                return null;
+            }
+            $payload['uid'] = (int) $uid;
+        }
+
+        if (($flags & 4) === 4) {
+            if (strlen($plain) < ($off + 1)) {
+                return null;
+            }
+            $unLen = ord($plain[$off] ?? "\x00");
+            $off += 1;
+            if ($unLen > 0) {
+                if (strlen($plain) < ($off + $unLen)) {
+                    return null;
+                }
+                $un = substr($plain, $off, $unLen);
+                $payload['un'] = $un;
+                $off += $unLen;
+            }
+        }
+
+        return $payload;
+    }
+
+    private static function base64UrlEncode(string $raw): string
+    {
+        $base = base64_encode($raw);
+        return is_string($base) ? rtrim(strtr($base, '+/', '-_'), '=') : '';
+    }
+
+    private static function base64UrlDecode(string $token): ?string
+    {
+        $base = strtr($token, '-_', '+/');
+        $base .= str_repeat('=', (4 - (strlen($base) % 4)) % 4);
+        $raw = base64_decode($base, true);
+        return is_string($raw) ? $raw : null;
+    }
+
+    private static function packU32(int $v): string
+    {
+        $v = max(0, min(4294967295, $v));
+        return pack('N', $v);
+    }
+
+    private static function unpackU32(string $raw, int &$offset): ?int
+    {
+        if (strlen($raw) < ($offset + 4)) {
+            return null;
+        }
+        $chunk = substr($raw, $offset, 4);
+        $offset += 4;
+        $u = unpack('Nn', $chunk);
+        if (!is_array($u) || !isset($u['n'])) {
+            return null;
+        }
+        return (int) $u['n'];
+    }
+
+    private static function siteFingerprintToBin(string $sid): string
+    {
+        $sid = strtoupper(trim($sid));
+        if (preg_match('/^SM-([A-F0-9]{8})$/', $sid, $m)) {
+            $bin = self::hexToBinSafe((string) ($m[1] ?? ''));
+            if ($bin !== '' && strlen($bin) === 4) {
+                return $bin;
+            }
+        }
+        return "\x00\x00\x00\x00";
+    }
+
+    private static function hexToBinSafe(string $hex): string
+    {
+        $hex = trim($hex);
+        if ($hex === '' || (strlen($hex) % 2) !== 0 || preg_match('/[^A-Fa-f0-9]/', $hex)) {
+            return '';
+        }
+        $bin = hex2bin($hex);
+        return is_string($bin) ? $bin : '';
+    }
+
+    private static function cutBytes(string $text, int $maxBytes): string
+    {
+        $maxBytes = max(0, min(2048, $maxBytes));
+        $text = (string) $text;
+        if ($maxBytes <= 0 || $text === '') {
+            return '';
+        }
+        if (function_exists('mb_strcut')) {
+            return (string) mb_strcut($text, 0, $maxBytes, 'UTF-8');
+        }
+        return substr($text, 0, $maxBytes);
+    }
+
+    private static function randomBytesCompat(int $len): string
+    {
+        $len = max(1, min(64, $len));
+        try {
+            return random_bytes($len);
+        } catch (Throwable $e) {
+            return substr(hash('sha256', uniqid((string) mt_rand(), true), true), 0, $len);
+        }
+    }
+
+    private static function xorSeal(string $data, string $secret, string $nonce): string
+    {
+        if ($data === '') {
+            return '';
+        }
+        $out = '';
+        $pos = 0;
+        $counter = 0;
+        $len = strlen($data);
+        while ($pos < $len) {
+            $block = hash_hmac('sha256', $nonce . '|' . $counter, $secret, true);
+            $take = min(strlen($block), $len - $pos);
+            $chunk = substr($data, $pos, $take);
+            $out .= ($chunk ^ substr($block, 0, $take));
+            $pos += $take;
+            $counter++;
+        }
+        return $out;
     }
 
     public static function tokenToZeroWidth(string $token): string
@@ -895,10 +1349,13 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         return $raw;
     }
 
-    private static function normalizeDecodedPayload(array $payload, string $source): array
+    private static function normalizeDecodedPayload(array $payload, string $source, array $meta = []): array
     {
         return [
             'source' => $source,
+            'tokenVersion' => (int) ($meta['tokenVersion'] ?? 1),
+            'signatureOk' => (int) ($meta['signatureOk'] ?? 0),
+            'sealed' => (int) ($meta['sealed'] ?? 0),
             'articleId' => (int) ($payload['cid'] ?? 0),
             'watermarkId' => (string) ($payload['wid'] ?? ''),
             'siteFingerprint' => (string) ($payload['sid'] ?? ''),

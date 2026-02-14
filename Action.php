@@ -37,6 +37,7 @@ class StegoMark_Action extends Typecho_Widget implements Widget_Interface_Do
         if (empty($cfg['copyLogEnabled'])) {
             $this->json(true, 'disabled');
         }
+        $this->verifySignedRequest($cfg);
 
         $visitorId = trim((string) $this->request->get('visitorId', ''));
         if ($visitorId === '') {
@@ -70,6 +71,9 @@ class StegoMark_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function ping(): void
     {
+        $cfg = StegoMark_Plugin::getConfig();
+        $this->verifySignedRequest($cfg);
+
         $visitorId = trim((string) $this->request->get('visitorId', ''));
         if ($visitorId === '') {
             $visitorId = $this->fallbackVisitorId();
@@ -128,6 +132,38 @@ class StegoMark_Action extends Typecho_Widget implements Widget_Interface_Do
         return substr(hash('sha256', $raw), 0, 24);
     }
 
+    private function verifySignedRequest(array $cfg): void
+    {
+        if (empty($cfg['actionSignedRequests'])) {
+            return;
+        }
+
+        $ts = (int) $this->request->get('sm_ts', 0);
+        $sig = trim((string) $this->request->get('sm_sig', ''));
+        if ($ts <= 0 || $sig === '') {
+            $this->json(false, 'Bad signature');
+        }
+
+        $ttl = 7200;
+        if (abs(time() - $ts) > $ttl) {
+            $this->json(false, 'Signature expired');
+        }
+
+        $cid = max(0, (int) $this->request->get('cid', 0));
+        $wmid = trim((string) $this->request->get('watermarkId', ''));
+
+        $secret = StegoMark_Store::getSiteSecret();
+        if ($secret === '') {
+            $this->json(false, 'Bad signature');
+        }
+
+        $base = $ts . '|' . $cid . '|' . $wmid . '|' . self::ipHash() . '|' . self::uaHash();
+        $expect = substr(hash_hmac('sha256', $base, $secret), 0, 32);
+        if (!hash_equals($expect, $sig)) {
+            $this->json(false, 'Bad signature');
+        }
+    }
+
     private static function ipHash(): string
     {
         $ip = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
@@ -155,4 +191,3 @@ class StegoMark_Action extends Typecho_Widget implements Widget_Interface_Do
         exit;
     }
 }
-
