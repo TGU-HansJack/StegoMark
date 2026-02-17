@@ -163,6 +163,15 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         $visualCanvasEnabled = new Typecho_Widget_Helper_Form_Element_Checkbox('visualCanvasEnabled', ['1' => _t('截图层：Canvas 访客图案')], [], _t('视觉微水印'));
         $form->addInput($visualCanvasEnabled);
 
+        $visualScope = new Typecho_Widget_Helper_Form_Element_Select(
+            'visualScope',
+            ['single' => _t('仅文章/页面单页'), 'all' => _t('全站前台页面')],
+            'single',
+            _t('视觉微水印作用范围'),
+            _t('控制“视觉微水印（截图层）”是否在首页/列表页等非单页显示。若想覆盖 ChatBox 等全站浮层，可选“全站前台页面”。')
+        );
+        $form->addInput($visualScope);
+
         $visualBgOpacity = new Typecho_Widget_Helper_Form_Element_Text(
             'visualBgOpacity',
             null,
@@ -308,6 +317,7 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
             'visualBgEnabled' => true,
             'visualNoiseEnabled' => false,
             'visualCanvasEnabled' => false,
+            'visualScope' => 'single',
             'visualBgOpacity' => 0.020,
             'visualNoiseOpacity' => 0.015,
             'visualCanvasOpacity' => 0.018,
@@ -371,6 +381,9 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
 
         $extraScope = strtolower(trim((string) ($cfg['extraInjectScope'] ?? 'single')));
         $cfg['extraInjectScope'] = in_array($extraScope, ['single', 'all'], true) ? $extraScope : 'single';
+
+        $visualScope = strtolower(trim((string) ($cfg['visualScope'] ?? 'single')));
+        $cfg['visualScope'] = in_array($visualScope, ['single', 'all'], true) ? $visualScope : 'single';
 
         $cfg['watermarkTokenLength'] = max(6, min(40, (int) ($cfg['watermarkTokenLength'] ?? 12)));
         $cfg['insertRatio'] = max(0.01, min(0.8, (float) ($cfg['insertRatio'] ?? 0.08)));
@@ -494,7 +507,10 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
         $ctx = self::resolveArchiveContext($archive, $cfg);
         $extraEnabled = !empty($cfg['extraInjectEnabled']) && trim((string) ($cfg['extraInjectSelectors'] ?? '')) !== '';
         $extraAll = $extraEnabled && ((string) ($cfg['extraInjectScope'] ?? 'single') === 'all');
-        if (!$ctx && !$extraAll) {
+        $cssLayerEnabledCfg = in_array('css', (array) ($cfg['algorithms'] ?? []), true);
+        $visualEnabledCfg = $cssLayerEnabledCfg && (!empty($cfg['visualBgEnabled']) || !empty($cfg['visualNoiseEnabled']) || !empty($cfg['visualCanvasEnabled']));
+        $visualAll = $visualEnabledCfg && ((string) ($cfg['visualScope'] ?? 'single') === 'all');
+        if (!$ctx && !$extraAll && !$visualAll) {
             return;
         }
         if (!$ctx) {
@@ -566,6 +582,7 @@ class StegoMark_Plugin implements Typecho_Plugin_Interface
                 'contentSelector' => (string) ($cfg['contentSelector'] ?? ''),
             ],
             'visual' => [
+                'scope' => (string) ($cfg['visualScope'] ?? 'single'),
                 'bg' => (!empty($cfg['visualBgEnabled']) && $cssLayerEnabled) ? 1 : 0,
                 'noise' => (!empty($cfg['visualNoiseEnabled']) && $cssLayerEnabled) ? 1 : 0,
                 'canvas' => (!empty($cfg['visualCanvasEnabled']) && $cssLayerEnabled) ? 1 : 0,

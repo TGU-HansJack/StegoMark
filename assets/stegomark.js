@@ -825,6 +825,18 @@
         applyExtraContainerInjection();
 
         var isSingle = (boot.page && Number(boot.page.isSingle) === 1) && (Number(boot.cid) > 0);
+        var visualScope = (boot.visual && boot.visual.scope) ? String(boot.visual.scope) : "single";
+        var wantVisual = isSingle || visualScope === "all";
+        if (wantVisual) {
+            var overlay = buildOverlay();
+            if (overlay) {
+                var existing = document.getElementById("stegomark-visual-overlay");
+                if (existing && existing.parentNode) {
+                    existing.parentNode.removeChild(existing);
+                }
+                document.body.appendChild(overlay);
+            }
+        }
         if (!isSingle) {
             return;
         }
@@ -840,14 +852,6 @@
             url: boot.url || location.href
         });
 
-        var overlay = buildOverlay();
-        if (overlay) {
-            var existing = document.getElementById("stegomark-visual-overlay");
-            if (existing && existing.parentNode) {
-                existing.parentNode.removeChild(existing);
-            }
-            document.body.appendChild(overlay);
-        }
     }
 
     if (document.readyState === "loading") {
